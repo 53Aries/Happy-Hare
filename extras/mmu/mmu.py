@@ -329,6 +329,8 @@ class Mmu:
         self.mmu_event_macro = config.get('mmu_event_macro', '_MMU_EVENT')
         self.form_tip_macro = config.get('form_tip_macro', '_MMU_FORM_TIP').replace("'", "")
         self.runout_form_tip_macro = config.get('runout_form_tip_macro', '').replace("'", "")  # Optional different macro for runout
+        self.runout_defer_unload = config.getint('runout_defer_unload', 1, minval=0, maxval=1)  # Defer unload until toolhead sensor triggers
+        self.runout_defer_without_endless_spool = config.getint('runout_defer_without_endless_spool', 0, minval=0, maxval=1)  # Allow defer even without endless spool
         self.purge_macro = config.get('purge_macro', '').replace("'", "")
         self.pre_unload_macro = config.get('pre_unload_macro', '_MMU_PRE_UNLOAD').replace("'", "")
         self.post_form_tip_macro = config.get('post_form_tip_macro', '_MMU_POST_FORM_TIP').replace("'", "")
@@ -597,6 +599,9 @@ class Mmu:
         #    self.gcode.register_command('T%d' % tool, self.cmd_MMU_CHANGE_TOOL, desc = "Change to tool T%d" % tool)
         self.gcode.register_command('MMU_LOAD', self.cmd_MMU_LOAD, desc=self.cmd_MMU_LOAD_help)
         self.gcode.register_command('MMU_EJECT', self.cmd_MMU_EJECT, desc = self.cmd_MMU_EJECT_help)
+        
+        # Internal commands
+        self.gcode.register_command('_MMU_COMPLETE_DEFERRED_RUNOUT', self.cmd_MMU_COMPLETE_DEFERRED_RUNOUT, desc="Internal: Complete a deferred runout")
         self.gcode.register_command('MMU_UNLOAD', self.cmd_MMU_UNLOAD, desc = self.cmd_MMU_UNLOAD_help)
         self.gcode.register_command('MMU_PAUSE', self.cmd_MMU_PAUSE, desc = self.cmd_MMU_PAUSE_help)
         self.gcode.register_command('MMU_UNLOCK', self.cmd_MMU_UNLOCK, desc = self.cmd_MMU_UNLOCK_help)
@@ -990,6 +995,9 @@ class Mmu:
         self.is_enabled = self.runout_enabled = True
         self.runout_last_enable_time = self.reactor.monotonic()
         self.is_handling_runout = self.calibrating = False
+        self.runout_deferred = False  # Track if we're in deferred runout mode
+        self.runout_deferred_tool = -1  # Which tool had the runout
+        self.runout_deferred_gate = -1  # Which gate to switch to
         self.last_print_stats = self.paused_extruder_temp = self.reason_for_pause = None
         self.tool_selected = self._next_tool = self.gate_selected = self.TOOL_GATE_UNKNOWN
         self.unit_selected = 0 # Which MMU unit is active if more than one
@@ -7280,6 +7288,45 @@ class Mmu:
 
             # We definitely have a filament runout
             self.is_handling_runout = True # Will remain true until complete and continue or resume after error
+            
+            # Check if we can defer the unload to use remaining bowden filament
+            has_endless_spool = self.enable_endless_spool
+            can_defer = (self.runout_defer_unload and 
+                        self.sensor_manager.has_sensor(self.SENSOR_EXTRUDER_ENTRY) and
+                        self.sensor_manager.check_sensor(self.SENSOR_EXTRUDER_ENTRY) and
+                        not self.runout_deferred and
+                        (has_endless_spool or self.runout_defer_without_endless_spool))
+            
+            if can_defer:
+                # Defer the actual unload - continue printing with bowden filament
+                self._set_gate_status(self.gate_selected, self.GATE_EMPTY)
+                
+                if has_endless_spool:
+                    next_gate, msg = self._get_next_endless_spool_gate(self.tool_selected, self.gate_selected)
+                    if next_gate == -1:
+                        # No alternative gate, must handle immediately
+                        self.log_info("No alternative gates available, cannot defer runout")
+                        can_defer = False
+                    else:
+                        self.log_info("Runout detected on %s - deferring toolchange to use remaining bowden filament (~%.0fmm)" % 
+                                     (sensor, self.bowden_lengths[self.gate_selected] if self.gate_selected >= 0 else 1000))
+                        self.log_info("Will switch to gate %d when extruder entry sensor triggers. Checking gates %s" % (next_gate, msg))
+                        self.runout_deferred = True
+                        self.runout_deferred_tool = self.tool_selected
+                        self.runout_deferred_gate = next_gate
+                        self.is_handling_runout = False  # Allow print to continue
+                else:
+                    # No endless spool - will require manual intervention when sensor triggers
+                    self.log_info("Runout detected on %s - deferring for manual intervention to use remaining bowden filament (~%.0fmm)" % 
+                                 (sensor, self.bowden_lengths[self.gate_selected] if self.gate_selected >= 0 else 1000))
+                    self.log_info("Print will pause when extruder entry sensor triggers for manual filament change")
+                    self.runout_deferred = True
+                    self.runout_deferred_tool = self.tool_selected
+                    self.runout_deferred_gate = -1  # -1 indicates manual intervention needed
+                    self.is_handling_runout = False  # Allow print to continue
+                    return  # Exit early - actual unload will happen when toolhead sensor triggers
+            
+            # Immediate unload - either deferred mode disabled, no toolhead sensor, or no alternative gates
             if self.enable_endless_spool:
                 self._set_gate_status(self.gate_selected, self.GATE_EMPTY) # Indicate current gate is empty
                 next_gate, msg = self._get_next_endless_spool_gate(self.tool_selected, self.gate_selected)
@@ -7302,6 +7349,61 @@ class Mmu:
 
         self._continue_after("endless_spool")
         self.pause_resume.send_resume_command() # Undo what runout sensor handling did
+
+    def cmd_MMU_COMPLETE_DEFERRED_RUNOUT(self, gcmd):
+        """Internal command to complete a deferred runout when toolhead sensor triggers"""
+        if not self.runout_deferred:
+            return  # Not in deferred mode, ignore
+        
+        self.log_info("Extruder entry sensor triggered - completing deferred runout for T%d" % self.runout_deferred_tool)
+        
+        # Check if this is manual intervention mode (gate = -1) or automatic endless spool
+        manual_mode = (self.runout_deferred_gate == -1)
+        
+        try:
+            with self._wrap_suspend_runout():
+                self.is_handling_runout = True
+                self._save_toolhead_position_and_park('runout')
+                
+                if manual_mode:
+                    # Manual intervention required - pause and wait for user to change filament
+                    self.log_info("Bowden filament consumed - pausing for manual filament change")
+                    self.log_info("Please remove remaining filament from toolhead and load new spool, then resume print")
+                    
+                    # Set filament position to indicate filament at extruder entry
+                    self.filament_pos = self.FILAMENT_POS_EXTRUDER_ENTRY
+                    
+                    # Clear deferred state before pausing
+                    self.runout_deferred = False
+                    self.runout_deferred_tool = -1
+                    self.runout_deferred_gate = -1
+                    
+                    # Pause and wait for manual intervention
+                    raise MmuError("Filament runout - manual filament change required")
+                else:
+                    # Automatic endless spool mode
+                    # Filament already consumed to extruder entry - no need to unload, just switch to new gate and load
+                    # Set filament_remaining to distance from extruder entry to nozzle so purge macro knows to purge this length
+                    purge_length = self.toolhead_entry_to_extruder + self.toolhead_extruder_to_nozzle
+                    self._set_filament_remaining(purge_length)
+                    self.log_debug("Set filament_remaining to %.1fmm (extruder entry to nozzle) for purge" % purge_length)
+                    
+                    self.select_gate(self.runout_deferred_gate)
+                    self._remap_tool(self.runout_deferred_tool, self.runout_deferred_gate)
+                    self._select_and_load_tool(self.runout_deferred_tool, purge=self.PURGE_STANDALONE)
+            
+            # Clear deferred state
+            self.runout_deferred = False
+            self.runout_deferred_tool = -1
+            self.runout_deferred_gate = -1
+            
+            self._continue_after("endless_spool")
+            self.pause_resume.send_resume_command()
+        except MmuError as ee:
+            self.runout_deferred = False  # Clear state on error
+            self.runout_deferred_tool = -1
+            self.runout_deferred_gate = -1
+            raise
 
     def _get_next_endless_spool_gate(self, tool, gate):
         group = self.endless_spool_groups[gate]

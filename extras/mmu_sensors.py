@@ -84,7 +84,15 @@ class MmuRunoutHelper:
         self._exec_gcode("%s EVENTTIME=%s" % (self.remove_gcode, eventtime))
 
     def _runout_event_handler(self, eventtime):
-        # Pausing from inside an event requires that the pause portion of pause_resume execute immediately.
+        # Check if MMU has deferred runout mode active and this is the extruder entry sensor
+        mmu = self.printer.lookup_object('mmu', None)
+        if mmu and self.name == 'extruder' and mmu.runout_deferred:
+            # This is the deferred runout trigger - complete the toolchange
+            self.min_event_systime = self.reactor.monotonic() + self.event_delay
+            self._exec_gcode("_MMU_COMPLETE_DEFERRED_RUNOUT EVENTTIME=%s" % eventtime)
+            return
+        
+        # Normal runout handling - Pausing from inside an event requires that the pause portion of pause_resume execute immediately.
         pause_resume = self.printer.lookup_object('pause_resume')
         pause_resume.send_pause_command()
         self._exec_gcode("%s EVENTTIME=%s" % (self.runout_gcode, eventtime))

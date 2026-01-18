@@ -334,6 +334,26 @@ slicer_tip_park_pos: 0			# This specifies the position of filament in extruder a
 #
 runout_form_tip_macro:			# Leave empty to use form_tip_macro, or e.g. _MMU_CUT_TIP for toolhead cutting on runout
 
+# With EndlessSpool, when the buffer detects runout there is still filament in the bowden (up to ~1m) that can be used.
+# Enabling this option defers the toolchange until the extruder entry sensor detects the filament has been fully consumed.
+# Since filament is consumed all the way to the extruder entry, no unload is needed - the new spool is loaded directly.
+# This maximizes filament usage. Requires an extruder entry sensor (extruder_switch_pin). If disabled, standard unload 
+# occurs immediately on buffer runout. Note: Only applies when EndlessSpool is enabled and an alternative gate exists.
+# Clog detection always triggers immediate pause since filament cannot advance.
+#
+# PURGE NOTE: When deferred runout completes, Happy Hare sets filament_remaining to the distance from extruder entry
+# to nozzle (toolhead_entry_to_extruder + toolhead_extruder_to_nozzle). Your purge macro will see this value in
+# printer.mmu.extruder_filament_remaining and should add it to the purge length to properly purge the old filament.
+#
+runout_defer_unload: 1                  # 1 = Defer toolchange until extruder entry sensor, 0 = Immediate unload (default: 1)
+
+# Allow deferred runout even without EndlessSpool enabled. When enabled, the print will continue using bowden filament
+# but will PAUSE when the extruder entry sensor triggers, requiring manual intervention to remove remaining filament
+# from the toolhead and load a new spool. This is useful for maximizing filament usage when you don't have multiple
+# spools of the same color configured for automatic switching.
+#
+runout_defer_without_endless_spool: 0   # 1 = Allow defer for manual intervention, 0 = Require EndlessSpool (default: 0)
+
 
 # Purging -------------------------------------------------------------------------------------------------------------
 # ██████╗ ██╗   ██╗██████╗  ██████╗ ██╗███╗   ██╗ ██████╗ 
