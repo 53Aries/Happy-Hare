@@ -328,6 +328,7 @@ class Mmu:
         self.print_state_changed_macro = config.get('print_state_changed_macro', '_MMU_PRINT_STATE_CHANGED')
         self.mmu_event_macro = config.get('mmu_event_macro', '_MMU_EVENT')
         self.form_tip_macro = config.get('form_tip_macro', '_MMU_FORM_TIP').replace("'", "")
+        self.runout_form_tip_macro = config.get('runout_form_tip_macro', '').replace("'", "")  # Optional different macro for runout
         self.purge_macro = config.get('purge_macro', '').replace("'", "")
         self.pre_unload_macro = config.get('pre_unload_macro', '_MMU_PRE_UNLOAD').replace("'", "")
         self.post_form_tip_macro = config.get('post_form_tip_macro', '_MMU_POST_FORM_TIP').replace("'", "")
@@ -5049,17 +5050,25 @@ class Mmu:
             self._set_filament_position(-self.toolhead_extruder_to_nozzle)
             return False
 
-        gcode_macro = self.printer.lookup_object("gcode_macro %s" % self.form_tip_macro, None)
-        if gcode_macro is None:
-            raise MmuError("Filament tip forming macro '%s' not found" % self.form_tip_macro)
+        # Determine which tip forming macro to use - use runout macro if handling runout and it's configured
+        tip_forming_macro = self.form_tip_macro
+        if self.is_handling_runout and self.runout_form_tip_macro:
+            tip_forming_macro = self.runout_form_tip_macro
+            self.log_debug("Using runout-specific tip forming macro: %s" % tip_forming_macro)
 
-        with self.wrap_action(self.ACTION_CUTTING_TIP if self.has_toolhead_cutter else self.ACTION_FORMING_TIP):
+        gcode_macro = self.printer.lookup_object("gcode_macro %s" % tip_forming_macro, None)
+        if gcode_macro is None:
+            raise MmuError("Filament tip forming macro '%s' not found" % tip_forming_macro)
+
+        # Check if this is a cutting macro for proper action display
+        has_cutter = 'cut' in tip_forming_macro.lower()
+        with self.wrap_action(self.ACTION_CUTTING_TIP if has_cutter else self.ACTION_FORMING_TIP):
             sync = self.reset_sync_gear_to_extruder(not extruder_only and self.sync_form_tip)
             self._ensure_safe_extruder_temperature(wait=True)
 
             # Perform the tip forming move and establish park_pos
             initial_encoder_position = self.get_encoder_distance()
-            park_pos, remaining, reported = self._do_form_tip()
+            park_pos, remaining, reported = self._do_form_tip(tip_forming_macro, test=False)
             measured = self.get_encoder_distance(dwell=None) - initial_encoder_position
             self._set_filament_remaining(remaining, self.gate_color[self.gate_selected] if self.gate_selected != self.TOOL_GATE_UNKNOWN else '')
 
@@ -5093,15 +5102,18 @@ class Mmu:
 
             return detected
 
-    def _do_form_tip(self, test=False):
+    def _do_form_tip(self, tip_forming_macro=None, test=False):
+        if tip_forming_macro is None:
+            tip_forming_macro = self.form_tip_macro
+            
         with self._wrap_extruder_current(self.extruder_form_tip_current, "for tip forming move"):
             initial_mcu_pos = self.mmu_extruder_stepper.stepper.get_mcu_position()
             initial_encoder_position = self.get_encoder_distance()
 
             with self._wrap_pressure_advance(0., "for tip forming"):
-                gcode_macro = self.printer.lookup_object("gcode_macro %s" % self.form_tip_macro, "_MMU_FORM_TIP")
+                gcode_macro = self.printer.lookup_object("gcode_macro %s" % tip_forming_macro, "_MMU_FORM_TIP")
                 self.log_info("Forming tip...")
-                self.wrap_gcode_command("%s %s" % (self.form_tip_macro, "FINAL_EJECT=1" if test else ""), exception=True, wait=True)
+                self.wrap_gcode_command("%s %s" % (tip_forming_macro, "FINAL_EJECT=1" if test else ""), exception=True, wait=True)
 
             final_mcu_pos = self.mmu_extruder_stepper.stepper.get_mcu_position()
             stepper_movement = (initial_mcu_pos - final_mcu_pos) * self.mmu_extruder_stepper.stepper.get_step_dist()
