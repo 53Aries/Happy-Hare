@@ -325,9 +325,28 @@ toolhead_move_error_tolerance: 60
 #
 force_form_tip_standalone: 1            # 0 = Slicer in print else standalone, 1 = Always standalone tip forming (TURN SLICER OFF!)
 form_tip_macro: _MMU_FORM_TIP           # Name of macro to call to perform the tip forming (or cutting) operation
-runout_form_tip_macro:                  # Optional: Different macro for runout (e.g. _MMU_CUT_TIP). Leave empty to use form_tip_macro
 extruder_form_tip_current: 100          # % of extruder current (100%-150%) to use when forming tip (100 to disable)
 slicer_tip_park_pos: 0                  # This specifies the position of filament in extruder after slicer completes tip forming
+
+
+# Runout handling -----------------------------------------------------------------------------------------------------
+# ██████╗ ██╗   ██╗███╗   ██╗ ██████╗ ██╗   ██╗████████╗
+# ██╔══██╗██║   ██║████╗  ██║██╔═══██╗██║   ██║╚══██╔══╝
+# ██████╔╝██║   ██║██╔██╗ ██║██║   ██║██║   ██║   ██║   
+# ██╔══██╗██║   ██║██║╚██╗██║██║   ██║██║   ██║   ██║   
+# ██║  ██║╚██████╔╝██║ ╚████║╚██████╔╝╚██████╔╝   ██║   
+# ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝  ╚═════╝    ╚═╝   
+#
+# Filament runout (buffer running out) and clog detection (filament stuck in nozzle) use the standard filament unload
+# sequence with tip forming/cutting. However you may want to use different logic when handling runout compared to a 
+# regular toolchange, this section allows for that customization.
+#
+# Tip forming macro to use during runout. You can:
+#   - Leave empty to use the same macro as regular toolchange (form_tip_macro above)
+#   - Specify a different macro like _MMU_CUT_TIP to use cutting for runout but forming for regular changes
+#   - Specify a custom macro with more aggressive tip forming settings optimized for runout recovery
+#
+runout_form_tip_macro:                  # Leave empty to use form_tip_macro, or e.g. _MMU_CUT_TIP for toolhead cutting on runout
 
 
 # Purging -------------------------------------------------------------------------------------------------------------
