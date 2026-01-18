@@ -92,10 +92,17 @@ class MmuRunoutHelper:
             self._exec_gcode("_MMU_COMPLETE_DEFERRED_RUNOUT EVENTTIME=%s" % eventtime)
             return
         
+        # Check if MMU wants to defer this runout (don't pause if deferring)
+        if mmu and hasattr(mmu, 'check_can_defer_runout') and mmu.check_can_defer_runout(self.name):
+            # MMU will defer this runout - don't pause, let MMU handle it
+            self.min_event_systime = self.reactor.monotonic() + self.event_delay
+            self._exec_gcode("%s EVENTTIME=%s SENSOR=%s" % (self.runout_gcode, eventtime, self.name))
+            return
+        
         # Normal runout handling - Pausing from inside an event requires that the pause portion of pause_resume execute immediately.
         pause_resume = self.printer.lookup_object('pause_resume')
         pause_resume.send_pause_command()
-        self._exec_gcode("%s EVENTTIME=%s" % (self.runout_gcode, eventtime))
+        self._exec_gcode("%s EVENTTIME=%s SENSOR=%s" % (self.runout_gcode, eventtime, self.name))
 
     def _exec_gcode(self, command):
         if command:

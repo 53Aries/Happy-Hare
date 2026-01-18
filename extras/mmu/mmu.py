@@ -7265,6 +7265,34 @@ class Mmu:
 # RUNOUT, ENDLESS SPOOL and GATE HANDLING #
 ###########################################
 
+    def check_can_defer_runout(self, sensor_name):
+        """Quick check if runout can be deferred - called before pause to avoid unnecessary pause"""
+        # Only buffer/gate sensors can trigger defer (not extruder entry sensor)
+        if sensor_name == 'extruder':
+            return False
+            
+        # Check basic defer conditions
+        if not self.runout_defer_unload or self.runout_deferred:
+            return False
+            
+        # Must have extruder entry sensor with filament present
+        if not self.sensor_manager.has_sensor(self.SENSOR_EXTRUDER_ENTRY):
+            return False
+        if not self.sensor_manager.check_sensor(self.SENSOR_EXTRUDER_ENTRY):
+            return False
+            
+        # Must have endless spool or manual mode enabled
+        if not (self.enable_endless_spool or self.runout_defer_without_endless_spool):
+            return False
+            
+        # If endless spool, check if alternative gate exists
+        if self.enable_endless_spool:
+            next_gate, _ = self._get_next_endless_spool_gate(self.tool_selected, self.gate_selected)
+            if next_gate == -1:
+                return False
+                
+        return True
+
     def _runout(self, force_runout=False, sensor=None):
         with self._wrap_suspend_runout(): # Don't want runout accidently triggering during handling
             self.is_handling_runout = force_runout # Best starting assumption
