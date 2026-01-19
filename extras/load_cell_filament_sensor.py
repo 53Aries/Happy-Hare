@@ -9,6 +9,18 @@
 
 import logging
 
+# Mock MCU for virtual sensor compatibility with button/switch wrappers
+class MockMCU:
+    def __init__(self, name):
+        self._name = name
+    
+    def register_config_callback(self, callback):
+        # Virtual sensor doesn't need config callbacks
+        pass
+    
+    def get_printer(self):
+        return None
+
 # Virtual endstop that triggers based on load cell force readings
 class LoadCellEndstop:
     RETRY_TIME = 0.010  # Check every 10ms during homing
@@ -112,6 +124,9 @@ class LoadCellFilamentSensor:
         self.filament_present = False
         self.sensor_enabled = True
         self._force_buffer = []
+        
+        # Create mock MCU for compatibility
+        self._mock_mcu = MockMCU("load_cell_filament_sensor_%s" % self.name)
         
         # Create virtual endstop
         self.endstop = LoadCellEndstop(self)
@@ -239,10 +254,7 @@ class LoadCellFilamentSensor:
     
     def get_mcu(self):
         """Return the MCU for button registration"""
-        if self.load_cell and hasattr(self.load_cell, 'sensor'):
-            return self.load_cell.sensor.get_mcu()
-        # Fallback during initialization
-        return None
+        return self._mock_mcu
     
     def setup_pin(self, pin_type, pin_params):
         """Setup virtual endstop or digital_out pin"""
