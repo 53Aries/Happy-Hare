@@ -34,19 +34,12 @@ The Python module is automatically loaded with Happy Hare since it's in the `ext
 
 ### 3. Configuration
 
-**Add to printer.cfg:**
-```ini
-[load_cell_filament_sensor toolhead]
-load_cell: load_cell_probe
-trigger_force: 30.0
-hysteresis: 5.0
-sample_count: 3
-tare_on_home: True
-tare_on_extruder_entry: True
-event_delay: 0.1
-```
+**Edit `config/base/mmu_load_cell_sensor.cfg`:**
+- Uncomment the `[load_cell_filament_sensor toolhead]` section
+- Update `load_cell` parameter to match your load cell probe name
+- Adjust `trigger_force` after calibration (start with 30.0)
 
-**Modify mmu_hardware.cfg:**
+**Edit `config/base/mmu_hardware.cfg`:**
 ```ini
 [mmu_sensors]
 extruder_switch_pin: your_mcu:PA8  # Optional but recommended

@@ -17,23 +17,36 @@ The load cell filament sensor monitors force readings from your load cell probe 
 
 ## Installation
 
-### Files Installed
+### Files Included
 
-1. **Python Module**: `klippy/extras/load_cell_filament_sensor.py`
-   - Core sensor implementation
+1. **Python Module**: `extras/load_cell_filament_sensor.py`
+   - Core sensor implementation (automatically loaded by Happy Hare)
 
-2. **Configuration**: `printer.cfg`
-   - Sensor configuration section added
+2. **Base Configuration**: `config/base/mmu_load_cell_sensor.cfg`
+   - Sensor configuration (uncomment and edit to enable)
 
-3. **MMU Integration**: `mmu/base/mmu_hardware.cfg`
-   - Updated `toolhead_switch_pin` to use virtual sensor
+3. **MMU Integration**: `config/base/mmu_hardware.cfg`
+   - Update `toolhead_switch_pin` to use virtual sensor
 
-4. **Testing Macros**: `Macros/load_cell_sensor_test.cfg`
+4. **Testing Macros**: `config/examples/load_cell_sensor/load_cell_sensor_test.cfg`
    - Helper macros for testing and calibration
+
+### Setup Steps
+
+1. **Edit** `config/base/mmu_load_cell_sensor.cfg`:
+   - Uncomment the `[load_cell_filament_sensor toolhead]` section
+   - Update `load_cell` parameter to match your load cell probe name
+   - Keep default values for initial testing
+
+2. **Edit** `config/base/mmu_hardware.cfg`:
+   - Set `toolhead_switch_pin: load_cell_filament_sensor:toolhead`
+   - Optionally configure `extruder_switch_pin` for auto-tare feature
+
+3. **Restart Klipper**
 
 ## Configuration
 
-### Sensor Settings (in printer.cfg)
+### Sensor Settings (in config/base/mmu_load_cell_sensor.cfg)
 
 ```ini
 [load_cell_filament_sensor toolhead]
