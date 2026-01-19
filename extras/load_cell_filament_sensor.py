@@ -237,6 +237,13 @@ class LoadCellFilamentSensor:
         
         return self.filament_present
     
+    def get_mcu(self):
+        """Return the MCU for button registration"""
+        if self.load_cell and hasattr(self.load_cell, 'sensor'):
+            return self.load_cell.sensor.get_mcu()
+        # Fallback during initialization
+        return None
+    
     def setup_pin(self, pin_type, pin_params):
         """Setup virtual endstop or digital_out pin"""
         if pin_type == 'endstop':
