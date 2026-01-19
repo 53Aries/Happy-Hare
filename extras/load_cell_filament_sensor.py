@@ -238,10 +238,19 @@ class LoadCellFilamentSensor:
         return self.filament_present
     
     def setup_pin(self, pin_type, pin_params):
-        """Setup virtual endstop pin"""
-        if pin_type != 'endstop':
-            raise self.printer.error("load_cell_filament_sensor only supports endstop pins")
-        return self.endstop
+        """Setup virtual endstop or digital_out pin"""
+        if pin_type == 'endstop':
+            return self.endstop
+        elif pin_type == 'digital_out':
+            # Return self for switch sensors - they just need query_endstop
+            return self
+        else:
+            raise self.printer.error(
+                "load_cell_filament_sensor pin type '%s' not supported" % pin_type)
+    
+    def query_endstop(self, print_time):
+        """Query method for switch sensors"""
+        return self.check_triggered()
     
     def get_status(self, eventtime):
         """Status for Klipper's status reporting"""
