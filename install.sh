@@ -3,14 +3,15 @@
 #
 # Installer / Updater script
 #
-# Copyright (C) 2022  moggieuk#6538 (discord) moggieuk@hotmail.com
+# Copyright (C) 2022-2026 moggieuk#6538 (discord)
+#                         moggieuk@hotmail.com
 #
 # Creality K1 Support
 #               2024  hamyy <oudy_1999@hotmail.com>
 #               2024  Unsweeticetea <iamzevle@gmail.com>
 #               2024  Dmitry Kychanov <k1-801@mail.ru>
 #
-VERSION=3.41 # Important: Keep synced with mmy.py
+VERSION=3.42 # Important: Keep synced with mmy.py
 
 F_VERSION=$(echo "$VERSION" | sed 's/\([0-9]\+\)\.\([0-9]\)\([0-9]\)/\1.\2.\3/')
 SCRIPT="$(readlink -f "$0")"
@@ -23,13 +24,18 @@ ARGS=( "$@" )
 
 OS_CREALITY_K1="creality-k1"
 OS_FLYOS_FAST="flyos-fast"
+OS_GUPPY="guppy-k1"
 OS_TYPE=""
+
 if [ $(uname -m) = "mips" ] && [ -d "/usr/data/creality" ]; then
     OS_TYPE="${OS_CREALITY_K1}"
     echo "Detected Creality K1 series printer"
 elif [ $(sed -n 's/^NAME="\(.*\)"/\1/p' /etc/os-release 2>/dev/null) = "FlyOS-Fast" ]; then
     OS_TYPE="${OS_FLYOS_FAST}"
     echo "Detected FlyOS-Fast"
+elif [ $(uname -m) = "mips" ] && [ -d "/root/printer_software" ]; then
+    OS_TYPE="${OS_GUPPY}"
+    echo "Detected Guppy K1 Mod"
 fi
 
 KLIPPER_HOME="${HOME}/klipper"
@@ -51,6 +57,13 @@ elif [ "$OS_TYPE" = "$OS_FLYOS_FAST" ]; then
     KLIPPER_CONFIG_HOME="/usr/share/printer_data/config"
     unset OCTOPRINT_KLIPPER_CONFIG_HOME
     unset OLD_KLIPPER_CONFIG_HOME
+elif [ "$OS_TYPE" = "$OS_GUPPY" ]; then
+    KLIPPER_HOME="/root/printer_software/klipper"
+    MOONRAKER_HOME="/root/printer_software/moonraker/moonraker"
+    KLIPPER_CONFIG_HOME="/root/printer_data/config"
+    unset OCTOPRINT_KLIPPER_CONFIG_HOME
+    unset OLD_KLIPPER_CONFIG_HOME
+
 fi
 
 clear
@@ -215,6 +228,9 @@ verify_not_root() {
     elif [ "$OS_TYPE" = "$OS_FLYOS_FAST" ]; then
         echo -e "${WARNING}This script is run on a ${OS_TYPE} system, so we want it to be run as root"
         return
+    elif [ "$OS_TYPE" = "$OS_GUPPY" ]; then
+        echo -e "${WARNING}This script is run on a ${OS_TYPE} system, so we want it to be run as root"
+        return
     else
         if [ "$EUID" -eq 0 ]; then
             echo -e "${ERROR}This script must not run as root"
@@ -229,6 +245,17 @@ check_klipper() {
             # There is no systemd on MIPS, we can only check the running processes
             running_klipper_pid=$(ps -o pid,comm,args | grep [^]]/klipper/klippy/klippy.py | awk '{print $1}')
             KLIPPER_PID_FILE=/var/run/klippy.pid
+
+            if [ $(cat $KLIPPER_PID_FILE) = $running_klipper_pid ]; then
+                echo -e "${DIM}Klipper service found"
+            else
+                echo -e "${ERROR}Klipper service not found! Please install Klipper first"
+                exit -1
+            fi
+        elif [ "$OS_TYPE" = "$OS_GUPPY" ]; then
+            # There is no systemd on MIPS, we can only check the running processes
+            running_klipper_pid=$(ps -o pid,comm,args | grep [^]]/klipper/klippy/klippy.py | awk '{print $1}')
+            KLIPPER_PID_FILE=/var/run/klipper.pid
 
             if [ $(cat $KLIPPER_PID_FILE) = $running_klipper_pid ]; then
                 echo -e "${DIM}Klipper service found"
@@ -252,6 +279,8 @@ check_octoprint() {
         OCTOPRINT=0 # Octoprint can not be set up on MIPS
     elif [ "$OS_TYPE" = "$OS_FLYOS_FAST" ]; then
         OCTOPRINT=0 # Octoprint can not be set up on FlyOS-Fast
+    elif [ "$OS_TYPE" = "$OS_GUPPY" ]; then
+        OCTOPRINT=0 # Octoprint can not be set up on mips
     elif [ "$NOSERVICE" -ne 1 ]; then
         if [ "$(sudo systemctl list-units --full -all -t service --no-legend | grep -F "octoprint.service")" ]; then
             echo -e "${DIM}OctoPrint service found"
@@ -386,7 +415,10 @@ parse_file() {
                         fi
                     fi
                     # Set/overwrite value in memory
-                    if echo "$value" | grep -q '^{.*}$'; then
+                    if echo "$value" | grep -q '^{ .*}$'; then
+                        # Special case drying_data dict format. This is fragile, can't wait for v4 to launch!
+                        eval "${combined}=\"${value}\""
+                    elif echo "$value" | grep -q '^{.*}$'; then
                         eval "${combined}=\$${value}"
                     elif [ "${value%"${value#?}"}" = "'" ]; then
                         eval "${combined}=\'${value}\'"
@@ -722,6 +754,25 @@ read_previous_config() {
     #if [ "${variable_led_enable}" != "" ]; then
     #    _hw_led_enable=$(convert_boolean_string_to_int "${variable_led_enable}")
     #fi
+
+    # v3.4.2 - not upgraded because new values will correct user adjustments
+    # sync_multiplier_high: 1.05
+    # sync_multiplier_low: 0.95
+    # >> sync_feedback_speed_multiplier: 5
+    # >> sync_feedback_extrude_threshold: 5
+    # v3.4.2 - name rationalization
+    # selector_touch_enable >> selector_touch_enabled
+    # enable_clog_detection >> flowguard_encoder_mode
+    # enable_endless_spool >> endless_spool_enabled
+    if [ "${_param_selector_touch_enable}" != "" ]; then
+        _param_selector_touch_enabled=${_param_selector_touch_enable}
+    fi
+    if [ "${_param_enable_clog_detection}" != "" ]; then
+        _param_flowguard_encoder_mode=${_param_enable_clog_detection}
+    fi
+    if [ "${_param_enable_endless_spool}" != "" ]; then
+        _param_endless_spool_enabled=${_param_enable_endless_spool}
+    fi
 }
 
 check_for_999() {
@@ -1375,6 +1426,10 @@ install_update_manager() {
                 sed -i 's|path: ~/Happy-Hare|path: /usr/data/Happy-Hare|' "${file}"
                 echo -e "${INFO}Update Happy-Hare path for MIPS architecture."
             fi
+            if [ "$OS_TYPE" = "$OS_GUPPY" ]; then
+                sed -i 's|path: ~/Happy-Hare|path: /root/Happy-Hare|' "${file}"
+                echo -e "${INFO}Update Happy-Hare path for MIPS architecture."
+            fi
             restart=1
         else
             echo -e "${WARNING}[update_manager happy-hare] already exists in moonraker.conf - skipping install"
@@ -1454,6 +1509,10 @@ restart_klipper() {
             set +e
             /etc/init.d/*klipper_service restart
             set -e
+        elif [ "$OS_TYPE" = "$OS_GUPPY" ]; then
+            set +e
+            /etc/init.d/S60klipper restart
+            set -e
         else
             sudo systemctl restart ${KLIPPER_SERVICE}
         fi
@@ -1469,6 +1528,10 @@ restart_moonraker() {
         if [ "$OS_TYPE" = "$OS_CREALITY_K1" ]; then
             set +e
             /etc/init.d/*moonraker_service restart
+            set -e
+        elif [ "$OS_TYPE" = "$OS_GUPPY" ]; then
+            set +e
+            /etc/init.d/S65moonraker restart
             set -e
         else
             sudo systemctl restart moonraker
